@@ -1,0 +1,37 @@
+# Core application
+streamlit
+langchain
+langchain-core
+langchain-community
+mistralai
+
+# Speech-to-text
+openai-whisper
+
+# Translation / language detection
+deep-translator
+langdetect
+
+# RAG and embeddings
+chromadb
+sentence-transformers
+huggingface-hub
+
+# YouTube audio/video ingestion
+yt-dlp
+
+# Video/audio processing
+ffmpeg-python
+pydub
+
+# PDF/TXT export
+reportlab
+
+# Environment/configuration
+python-dotenv
+
+# Data handling
+numpy
+pandas
+
+
