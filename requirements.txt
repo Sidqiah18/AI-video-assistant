@@ -3,6 +3,7 @@ streamlit
 langchain
 langchain-core
 langchain-community
+langchain-mistralai
 mistralai
 
 # Speech-to-text

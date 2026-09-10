@@ -25,3 +25,23 @@ def transcribe_audio(audio_file: str, translate: bool = False) -> str:
     model.options['task'] = 'translate' if translate else 'transcribe'
     result = model.transcribe(audio_file)
     return result['text']
+
+def transcribe_all(chunks: list, translate: bool = False) -> str:
+    """
+    Transcribes a list of audio chunks using the Whisper model.
+
+    Args:
+        chunks (list): A list of paths to audio chunk files to be transcribed.
+        translate (bool): Whether to translate the transcription to English.
+
+    Returns:
+        str: The concatenated transcribed text from all chunks.
+    """
+    
+    full_transcription = ""
+    for i, chunk in enumerate(chunks):
+        print(f"Transcribing chunk {i + 1}")
+        transcription = transcribe_audio(chunk, translate=translate)
+        full_transcription += transcription + " "
+        print("Transcription complete!")
+    return full_transcription
