@@ -1,4 +1,5 @@
-﻿import os
+import os
+import re
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -13,8 +14,23 @@ def get_mistral_model():
     Returns:
         ChatMistralAI: An instance of the Mistral model.
     """
-    mistral_model = os.getenv("MISTRAL_MODEL") or "mistralai/Mistral-7B-Instruct-v0.1"
-    return ChatMistralAI(model=mistral_model, temperature=0.3, max_output_tokens=512)
+    mistral_model = os.getenv("MISTRAL_MODEL") or "ministral-8b-latest"
+    return ChatMistralAI(model=mistral_model, temperature=0.2, max_tokens=512)
+
+
+def clean_llm_output(text: str) -> str:
+    """Strip common conversational introductory and concluding lines from LLM responses."""
+    lines = text.strip().splitlines()
+    while lines and (
+        not lines[0].strip()
+        or re.match(
+            r"^(here('s| is)|below is|sure|certainly|this is|in this summary|the following is)[\w\s,.:\-]*:?\s*$",
+            lines[0].strip(),
+            re.IGNORECASE,
+        )
+    ):
+        lines.pop(0)
+    return "\n".join(lines).strip()
 
 
 def build_chain(system_prompt: str):
@@ -28,9 +44,42 @@ def build_chain(system_prompt: str):
     return RunnablePassthrough() | RunnableLambda(lambda x: {"text": x}) | prompt | llm | StrOutputParser()
 
 
+def is_meeting_transcript(transcript: str) -> bool:
+    """
+    Determines whether the transcript represents a team/business meeting
+    (with colleagues discussing project tasks, assignments, status updates, or decisions)
+    versus a general video (such as a YouTube tutorial, tech talk, lecture, podcast, or monologue).
+    """
+    if not transcript or not transcript.strip():
+        return False
+
+    llm = get_mistral_model()
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "You are an audio classifier. Analyze the excerpt and determine if it represents an interactive business or team meeting "
+                "(with colleagues discussing agenda items, assignments, or decisions) OR if it is a general video "
+                "(such as an educational YouTube tutorial, tech talk, lecture, explainer, or presentation).\n"
+                "Answer strictly with one word: 'MEETING' or 'GENERAL'."
+            ),
+            ("human", "{text}"),
+        ]
+    )
+    chain = prompt | llm | StrOutputParser()
+    try:
+        sample = transcript[:3000]
+        classification = chain.invoke({"text": sample}).strip().upper()
+        return "MEETING" in classification
+    except Exception:
+        return False
+
+
 def extract_action_items(transcript: str) -> str:
+    """Extract action items from a meeting transcript."""
     chain = build_chain(
         """You are an expert meeting analyst. From the meeting transcript, extract all action items.
+Do NOT include conversational preambles. Start directly with the items.
 
 For each item, provide:
 - Action
@@ -40,26 +89,14 @@ For each item, provide:
 - Status
         """
     )
-    return chain.invoke(transcript)
-
-
-def extract_decisions(transcript: str) -> str:
-    chain = build_chain(
-        """Extract all important questions raised in the meeting.
-
-For each question, provide:
-- Question
-- Asked by
-- Context
-- Status
-        """
-    )
-    return chain.invoke(transcript)
+    return clean_llm_output(chain.invoke(transcript))
 
 
 def extract_key_decisions(transcript: str) -> str:
+    """Extract key decisions from a meeting transcript."""
     chain = build_chain(
         """Extract all key decisions made during the meeting.
+Do NOT include conversational preambles. Start directly with the decisions.
 
 For each decision, provide:
 - Decision
@@ -68,7 +105,38 @@ For each decision, provide:
 - Impact
         """
     )
-    return chain.invoke(transcript)
+    return clean_llm_output(chain.invoke(transcript))
+
+
+def extract_key_takeaways(transcript: str) -> str:
+    """
+    Extract core concepts, mechanisms, techniques, and practical takeaways
+    from a tutorial, educational video, or presentation transcript.
+    """
+    chain = build_chain(
+        """You are an expert educational content analyst. Extract the primary key takeaways, core concepts,
+and techniques explained in this video/tutorial transcript.
+Organize them with clear bullet points and bold section headers.
+CRITICAL: Do NOT use meeting terminology (e.g. owners, deciders, agenda).
+Do NOT include any conversational filler (e.g., 'Here are the key takeaways...').
+Start directly with the markdown bullet points.
+        """
+    )
+    return clean_llm_output(chain.invoke(transcript))
+
+
+def extract_decisions(transcript: str) -> str:
+    """Kept for backward compatibility."""
+    chain = build_chain(
+        """Extract all important questions raised in the session.
+For each question, provide:
+- Question
+- Asked by / Topic
+- Context
+- Status
+        """
+    )
+    return clean_llm_output(chain.invoke(transcript))
 
 
 def _key_decisions(transcript: str) -> str:

@@ -22,9 +22,11 @@ def transcribe_audio(audio_file: str, translate: bool = False) -> str:
         str: The transcribed text.
     """
     model = get_whisper_model()
-    model.options['task'] = 'translate' if translate else 'transcribe'
-    result = model.transcribe(audio_file)
-    return result['text']
+    result = model.transcribe(
+        audio_file,
+        task="translate" if translate else "transcribe",
+    )
+    return result["text"]
 
 def transcribe_all(chunks: list, translate: bool = False) -> str:
     """

@@ -13,7 +13,7 @@ def get_llm():
     if not api_key:
         raise ValueError("MISTRAL_API_KEY is not set.")
 
-    model_name = os.getenv("MISTRAL_MODEL") or "mistral-large-latest"
+    model_name = os.getenv("MISTRAL_MODEL") or "ministral-8b-latest"
     return ChatMistralAI(model=model_name, temperature=0.2, max_tokens=512)
 
 
@@ -26,13 +26,19 @@ def format_docs(docs) -> str:
 
 
 def build_rag_chain(transcript: str = ""):
-    """Build a retrieval-augmented QA chain that answers from transcript chunks."""
+    """Build a retrieval-augmented QA chain that answers strictly from transcript chunks."""
     llm = get_llm()
 
     prompt = ChatPromptTemplate.from_template(
-        "You are a helpful assistant. Answer using the transcript context only. "
-        "If the answer is not in the context, say you do not know.\n\n"
-        "Context:\n{context}\n\nQuestion:\n{question}"
+        "You are a helpful AI assistant answering questions about this specific video/audio transcript.\n"
+        "Instructions:\n"
+        "1. Base your answer strictly on the transcript context provided below.\n"
+        "2. If the user's message is a greeting or polite remark (e.g. 'hello', 'thank you', 'okay'), respond warmly and politely without dumping the context.\n"
+        "3. If the user's question asks about something that is NOT mentioned or explained in the context, clearly answer: "
+        "'That is not mentioned in this video.' Do NOT invent facts or borrow examples from outside topics.\n"
+        "4. Keep your answer concise, accurate, and direct.\n\n"
+        "Context:\n{context}\n\n"
+        "Question:\n{question}"
     )
 
     chain = (

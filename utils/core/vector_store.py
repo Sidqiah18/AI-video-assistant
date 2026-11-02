@@ -1,4 +1,5 @@
 import os
+import shutil
 from typing import Any, Optional
 
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -42,10 +43,40 @@ def get_vector_store(collection_name: str = DEFAULT_COLLECTION, persist_director
     )
 
 
-def add_transcript(transcript: str, metadata: Optional[dict[str, Any]] = None, source: Optional[str] = None):
-    """Embed and save transcript chunks in Chroma."""
+def clear_vector_store(collection_name: str = DEFAULT_COLLECTION):
+    """
+    Clears all documents from the vector store collection to ensure
+    new videos do not get contaminated by chunks from previously processed videos.
+    """
+    try:
+        vs = get_vector_store(collection_name=collection_name)
+        vs.delete_collection()
+    except Exception:
+        # Fallback: if deleting the collection fails, reset the directory
+        try:
+            if os.path.exists(CHROMA_DIR):
+                shutil.rmtree(CHROMA_DIR)
+                os.makedirs(CHROMA_DIR, exist_ok=True)
+        except Exception:
+            pass
+
+
+def add_transcript(
+    transcript: str,
+    metadata: Optional[dict[str, Any]] = None,
+    source: Optional[str] = None,
+    clear_existing: bool = True,
+):
+    """
+    Embed and save transcript chunks in Chroma.
+    By default, clears existing documents so the vector store only contains
+    the active video's content, avoiding cross-video hallucination.
+    """
     if not transcript or not transcript.strip():
         return []
+
+    if clear_existing:
+        clear_vector_store()
 
     doc_metadata = dict(metadata or {})
     if source:
@@ -64,19 +95,24 @@ def add_transcript(transcript: str, metadata: Optional[dict[str, Any]] = None, s
     return vector_store.add_documents(documents)
 
 
-def query_transcript(question: str, k: int = 4):
+def query_transcript(question: str, k: int = 4, filter: Optional[dict[str, Any]] = None):
     """Retrieve the most relevant transcript chunks for a question."""
     if not question or not question.strip():
         return []
 
-    vector_store = get_vector_store()
-    return vector_store.similarity_search(question, k=k)
+    try:
+        vector_store = get_vector_store()
+        if filter:
+            return vector_store.similarity_search(question, k=k, filter=filter)
+        return vector_store.similarity_search(question, k=k)
+    except Exception:
+        return []
 
 
 def rag_answer(question: str, transcript: Optional[str] = None, k: int = 4) -> str:
     """Answer a question from transcript content using retrieval-augmented generation."""
     if transcript:
-        add_transcript(transcript, source="direct_input")
+        add_transcript(transcript, source="direct_input", clear_existing=True)
         context_docs = [
             Document(page_content=chunk, metadata={"source": "direct_input"})
             for chunk in split_transcript(transcript)[:k]
@@ -93,13 +129,14 @@ def rag_answer(question: str, transcript: Optional[str] = None, k: int = 4) -> s
     if api_key:
         try:
             llm = ChatMistralAI(
-                model=os.getenv("MISTRAL_MODEL") or "mistral-large-latest",
+                model=os.getenv("MISTRAL_MODEL") or "ministral-8b-latest",
                 temperature=0.2,
                 max_tokens=512,
             )
             prompt = ChatPromptTemplate.from_template(
-                "You are a helpful assistant. Answer the user's question using only the transcript context below. "
-                "If the answer is not present in the context, say you do not know.\n\n"
+                "You are a helpful assistant answering from a specific video/audio transcript.\n"
+                "Answer the user's question using only the transcript context below. "
+                "If the answer is not present in the context, say 'That is not mentioned in this video.'\n\n"
                 "Context:\n{context}\n\nQuestion:\n{question}"
             )
             return (prompt | llm | StrOutputParser()).invoke({"context": context_text, "question": question})
@@ -118,9 +155,8 @@ __all__ = [
     "split_transcript",
     "get_embedding_model",
     "get_vector_store",
+    "clear_vector_store",
     "add_transcript",
     "query_transcript",
     "rag_answer",
 ]
-
-

@@ -17,6 +17,7 @@ langdetect
 chromadb
 sentence-transformers
 huggingface-hub
+torchvision
 
 # YouTube audio/video ingestion
 yt-dlp
