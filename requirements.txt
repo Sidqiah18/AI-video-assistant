@@ -21,6 +21,7 @@ torchvision
 
 # YouTube audio/video ingestion
 yt-dlp
+audioop-lts
 
 # Video/audio processing
 ffmpeg-python
