@@ -20,7 +20,7 @@ huggingface-hub
 torchvision
 
 # YouTube audio/video ingestion
-yt-dlp
+yt-dlp[default]
 audioop-lts
 
 # Video/audio processing
