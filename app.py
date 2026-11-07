@@ -17,7 +17,7 @@ for stream in (sys.stdout, sys.stderr):
 import streamlit as st
 from dotenv import load_dotenv
 
-from utils.audio_processor import process_audio
+from utils.audio_processor import fetch_youtube_transcript, process_audio
 from utils.core.rag_engine import load_rag_chain
 from utils.core.transcriber import transcribe_all
 from utils.core.vector_store import add_transcript, clear_vector_store, query_transcript
@@ -172,12 +172,24 @@ if run_button:
             st.toast("Transcript processed and indexed!", icon="✅")
     elif source_value:
         try:
-            with st.status("Processing audio...", expanded=True) as status:
-                st.write("1️⃣ Downloading & converting audio...")
-                chunks = process_audio(source_value)
-                st.write(f"2️⃣ Transcribing {len(chunks)} audio chunk(s) using Whisper...")
-                transcript = transcribe_all(chunks, translate=translate)
-                st.write("3️⃣ Generating title, summary & indexing into ChromaDB...")
+            with st.status("Processing content...", expanded=True) as status:
+                transcript = None
+
+                # Optimization for cloud deployment (Streamlit Cloud):
+                # Try instant direct caption extraction first to avoid datacenter 403 blocks & heavy CPU Whisper load
+                if source_type == "YouTube URL":
+                    st.write("1️⃣ Extracting captions from YouTube (cloud-optimized)...")
+                    transcript = fetch_youtube_transcript(source_value)
+                    if transcript:
+                        st.write("✅ Transcript extracted directly from YouTube in seconds!")
+
+                if not transcript:
+                    st.write("1️⃣ Downloading & converting audio...")
+                    chunks = process_audio(source_value)
+                    st.write(f"2️⃣ Transcribing {len(chunks)} audio chunk(s) using Whisper...")
+                    transcript = transcribe_all(chunks, translate=translate)
+
+                st.write("2️⃣ Generating title, summary & indexing into ChromaDB...")
                 result = process_and_index_transcript(
                     transcript,
                     source_name=source_value,
@@ -185,7 +197,7 @@ if run_button:
                 )
                 st.session_state["result"] = result
                 status.update(label="Complete! Results ready below.", state="complete", expanded=False)
-            st.toast("Transcription complete and indexed!", icon="✅")
+            st.toast("Processing complete and indexed!", icon="✅")
         except Exception as exc:
             st.error(f"Processing failed: {exc}")
     else:

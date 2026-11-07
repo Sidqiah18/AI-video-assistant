@@ -1,6 +1,9 @@
 import os
 import re
+import tempfile
+from typing import Optional
 
+import requests
 import yt_dlp
 from pydub import AudioSegment
 
@@ -8,17 +11,120 @@ DOWNLOAD_DIR = os.path.join(os.getcwd(), "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
+def get_cookie_file() -> Optional[str]:
+    """Retrieve cookies file path from disk or from Streamlit/environment secrets."""
+    # 1. Local cookies.txt in workspace
+    local_cookies = os.path.join(os.getcwd(), "cookies.txt")
+    if os.path.isfile(local_cookies):
+        return local_cookies
+
+    # 2. Check Streamlit secrets or environment variable
+    raw_cookies = None
+    try:
+        import streamlit as st
+        raw_cookies = st.secrets.get("YOUTUBE_COOKIES")
+    except Exception:
+        pass
+
+    if not raw_cookies:
+        raw_cookies = os.getenv("YOUTUBE_COOKIES")
+
+    if raw_cookies and raw_cookies.strip():
+        tmp = tempfile.NamedTemporaryFile(delete=False, mode="w", suffix=".txt", encoding="utf-8")
+        tmp.write(raw_cookies)
+        tmp.close()
+        return tmp.name
+
+    return None
+
+
+def fetch_youtube_transcript(url: str) -> Optional[str]:
+    """
+    Directly extracts official or auto-generated captions from YouTube without downloading media streams.
+    Bypasses datacenter/cloud HTTP 403 Forbidden errors and executes in 1-2 seconds.
+    """
+    ydl_opts = {
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": False,
+    }
+
+    cookie_path = get_cookie_file()
+    if cookie_path:
+        ydl_opts["cookiefile"] = cookie_path
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if not info:
+                return None
+
+            subs = info.get("subtitles") or {}
+            auto_subs = info.get("automatic_captions") or {}
+
+            # Prioritize English caption tracks, or fallback to first available language track
+            caption_tracks = (
+                subs.get("en")
+                or subs.get("en-US")
+                or subs.get("en-GB")
+                or auto_subs.get("en")
+                or auto_subs.get("en-US")
+                or auto_subs.get("en-GB")
+            )
+
+            if not caption_tracks:
+                for lang, tracks in {**subs, **auto_subs}.items():
+                    if tracks:
+                        caption_tracks = tracks
+                        break
+
+            if not caption_tracks:
+                return None
+
+            # Look for json3 or vtt formats
+            target_format = None
+            for fmt in caption_tracks:
+                if fmt.get("ext") == "json3":
+                    target_format = fmt
+                    break
+            if not target_format and caption_tracks:
+                target_format = caption_tracks[0]
+
+            if not target_format or not target_format.get("url"):
+                return None
+
+            resp = requests.get(target_format["url"], timeout=10)
+            if resp.status_code != 200:
+                return None
+
+            if target_format.get("ext") == "json3":
+                data = resp.json()
+                lines = []
+                for event in data.get("events", []):
+                    for seg in event.get("segs", []):
+                        txt = seg.get("utf8", "")
+                        if txt and txt != "\n":
+                            lines.append(txt)
+                raw_text = "".join(lines)
+            else:
+                raw_text = re.sub(r"<[^>]+>", "", resp.text)
+                raw_text = re.sub(r"\d{2}:\d{2}:\d{2}\.\d{3} --> .*", "", raw_text)
+
+            # Clean audio annotations like [Music] or [Applause]
+            cleaned = re.sub(r"\[(Music|Applause|Laughter|Loud Music|Silence)\]", "", raw_text, flags=re.IGNORECASE)
+            cleaned = " ".join(cleaned.split())
+            return cleaned if cleaned.strip() else None
+
+    except Exception:
+        return None
+
+
 def download_audio(url: str) -> str:
     """
     Downloads audio from a given URL and returns the actual downloaded file path.
     Uses mobile player client spoofing and automatic browser cookie fallback
     to prevent YouTube 'Sign in to confirm you’re not a bot' blocks.
-
-    Args:
-        url (str): The URL of the audio to download.
-
-    Returns:
-        str: The path to the downloaded audio file.
     """
     output_path = os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s")
     base_opts = {
@@ -28,15 +134,17 @@ def download_audio(url: str) -> str:
         "noplaylist": True,
         "no_warnings": True,
         "restrictfilenames": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "ios"],
+            }
+        },
     }
 
+    cookie_file = get_cookie_file()
+    if cookie_file:
+        base_opts["cookiefile"] = cookie_file
 
-    # If cookies.txt is provided in project root, use it
-    cookies_file = os.path.join(os.getcwd(), "cookies.txt")
-    if os.path.isfile(cookies_file):
-        base_opts["cookiefile"] = cookies_file
-
-    # If environment variable specifies a browser for cookies, use it
     env_browser = os.getenv("YOUTUBE_COOKIES_BROWSER")
     if env_browser:
         base_opts["cookiesfrombrowser"] = (env_browser.strip().lower(),)
@@ -50,7 +158,6 @@ def download_audio(url: str) -> str:
             expected_file = ydl.prepare_filename(info)
     except Exception as initial_exc:
         err_msg = str(initial_exc).lower()
-        # If blocked by YouTube bot detection, try automatic browser cookies fallback
         if "sign in to confirm" in err_msg or "bot" in err_msg or "403" in err_msg:
             fallback_success = False
             for browser in ("chrome", "edge", "firefox", "brave"):
@@ -91,15 +198,7 @@ def download_audio(url: str) -> str:
 
 
 def convert_to_wav(input_file: str) -> str:
-    """
-    Converts an audio file to WAV format.
-
-    Args:
-        input_file (str): The path to the input audio file.
-
-    Returns:
-        str: The path to the converted WAV file.
-    """
+    """Converts an audio file to WAV format."""
     if not os.path.exists(input_file):
         raise FileNotFoundError(f"Input audio file not found: {input_file}")
 
@@ -111,16 +210,7 @@ def convert_to_wav(input_file: str) -> str:
 
 
 def chunk_audio(input_file: str, chunk_length_minutes: int = 1) -> list:
-    """
-    Splits an audio file into smaller chunks.
-
-    Args:
-        input_file (str): The path to the input audio file.
-        chunk_length_minutes (int): Length of each chunk in minutes. Defaults to 1 minute.
-
-    Returns:
-        list: A list of paths to the chunked audio files.
-    """
+    """Splits an audio file into smaller chunks."""
     audio = AudioSegment.from_wav(input_file)
     chunk_length_ms = chunk_length_minutes * 60 * 1000
     chunks = []
