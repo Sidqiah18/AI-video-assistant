@@ -31,6 +31,14 @@ from utils.summarizer import generate_title, summarize_transcript
 
 load_dotenv()
 
+# Bridge Streamlit Cloud secrets to os.environ so all libraries can access them
+try:
+    for secret_key, secret_val in st.secrets.items():
+        if isinstance(secret_val, str):
+            os.environ[secret_key] = secret_val
+except Exception:
+    pass
+
 
 st.set_page_config(page_title="AI Video Assistant", page_icon="🎬", layout="wide")
 
@@ -155,6 +163,22 @@ with st.sidebar:
     run_button = st.button("Process transcript", type="primary")
 
 if run_button:
+    # Validate API key presence
+    if not os.getenv("MISTRAL_API_KEY"):
+        st.error(
+            "🔑 **MISTRAL_API_KEY is not set or invalid!**\n\n"
+            "**For Streamlit Cloud:**\n"
+            "1. Go to your app at **[share.streamlit.io](https://share.streamlit.io)**.\n"
+            "2. Click the three dots `...` in the bottom right ➔ **Settings** ➔ **Secrets**.\n"
+            "3. Add your secrets:\n"
+            "   ```toml\n"
+            "   MISTRAL_API_KEY = \"your_api_key_here\"\n"
+            "   MISTRAL_MODEL = \"ministral-8b-latest\"\n"
+            "   ```\n"
+            "4. Click **Save** and retry."
+        )
+        st.stop()
+
     # Reset chat history for the new video
     st.session_state["qa_history"] = []
 

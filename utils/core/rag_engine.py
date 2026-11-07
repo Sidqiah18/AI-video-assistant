@@ -10,11 +10,21 @@ from langchain_mistralai import ChatMistralAI
 def get_llm():
     """Create and return the chat model for the RAG pipeline with automatic retries."""
     api_key = os.getenv("MISTRAL_API_KEY")
-    if not api_key:
-        raise ValueError("MISTRAL_API_KEY is not set.")
+    model_name = os.getenv("MISTRAL_MODEL")
+    try:
+        import streamlit as st
+        if not api_key and "MISTRAL_API_KEY" in st.secrets:
+            api_key = st.secrets["MISTRAL_API_KEY"]
+        if not model_name and "MISTRAL_MODEL" in st.secrets:
+            model_name = st.secrets["MISTRAL_MODEL"]
+    except Exception:
+        pass
 
-    model_name = os.getenv("MISTRAL_MODEL") or "ministral-8b-latest"
-    return ChatMistralAI(model=model_name, temperature=0.2, max_tokens=512, max_retries=5)
+    if not api_key:
+        raise ValueError("MISTRAL_API_KEY is not set. Please add it to your .env or Streamlit Cloud Secrets.")
+
+    model_name = model_name or "ministral-8b-latest"
+    return ChatMistralAI(model=model_name, api_key=api_key, temperature=0.2, max_tokens=512, max_retries=5)
 
 
 def format_docs(docs) -> str:

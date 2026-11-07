@@ -17,8 +17,27 @@ def get_mistral_model():
     Returns:
         ChatMistralAI: An instance of the Mistral model.
     """
-    mistral_model = os.getenv("MISTRAL_MODEL") or "ministral-8b-latest"
-    return ChatMistralAI(model=mistral_model, temperature=0.2, max_tokens=512, max_retries=5)
+    api_key = os.getenv("MISTRAL_API_KEY")
+    mistral_model = os.getenv("MISTRAL_MODEL")
+    try:
+        import streamlit as st
+        if not api_key and "MISTRAL_API_KEY" in st.secrets:
+            api_key = st.secrets["MISTRAL_API_KEY"]
+        if not mistral_model and "MISTRAL_MODEL" in st.secrets:
+            mistral_model = st.secrets["MISTRAL_MODEL"]
+    except Exception:
+        pass
+
+    mistral_model = mistral_model or "ministral-8b-latest"
+    kwargs = {
+        "model": mistral_model,
+        "temperature": 0.2,
+        "max_tokens": 512,
+        "max_retries": 5,
+    }
+    if api_key:
+        kwargs["api_key"] = api_key
+    return ChatMistralAI(**kwargs)
 
 
 @retry(
