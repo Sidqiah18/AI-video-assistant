@@ -28,12 +28,8 @@ def download_audio(url: str) -> str:
         "noplaylist": True,
         "no_warnings": True,
         "restrictfilenames": True,
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["ios", "android", "mweb"],
-            }
-        },
     }
+
 
     # If cookies.txt is provided in project root, use it
     cookies_file = os.path.join(os.getcwd(), "cookies.txt")
