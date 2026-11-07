@@ -5,6 +5,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_mistralai import ChatMistralAI
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 
 def get_mistral_model():
@@ -12,10 +13,21 @@ def get_mistral_model():
     Initializes and returns the Mistral model.
 
     Returns:
-        ChatMistralAI: An instance of the Mistral model.
+        ChatMistralAI: An instance of the Mistral model with automatic retries.
     """
     mistral_model = os.getenv("MISTRAL_MODEL") or "ministral-8b-latest"
-    return ChatMistralAI(model=mistral_model, temperature=0.2, max_tokens=512)
+    return ChatMistralAI(model=mistral_model, temperature=0.2, max_tokens=512, max_retries=5)
+
+
+@retry(
+    retry=retry_if_exception_type(Exception),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=2, max=15),
+    reraise=True,
+)
+def invoke_chain_with_backoff(chain, input_data):
+    """Invoke a LangChain runnable with automatic exponential backoff on rate limits."""
+    return chain.invoke(input_data)
 
 
 def clean_llm_output(text: str) -> str:
@@ -69,7 +81,7 @@ def is_meeting_transcript(transcript: str) -> bool:
     chain = prompt | llm | StrOutputParser()
     try:
         sample = transcript[:3000]
-        classification = chain.invoke({"text": sample}).strip().upper()
+        classification = invoke_chain_with_backoff(chain, {"text": sample}).strip().upper()
         return "MEETING" in classification
     except Exception:
         return False
@@ -89,7 +101,8 @@ For each item, provide:
 - Status
         """
     )
-    return clean_llm_output(chain.invoke(transcript))
+    sample = transcript[:15000] if transcript else ""
+    return clean_llm_output(invoke_chain_with_backoff(chain, sample))
 
 
 def extract_key_decisions(transcript: str) -> str:
@@ -105,7 +118,8 @@ For each decision, provide:
 - Impact
         """
     )
-    return clean_llm_output(chain.invoke(transcript))
+    sample = transcript[:15000] if transcript else ""
+    return clean_llm_output(invoke_chain_with_backoff(chain, sample))
 
 
 def extract_key_takeaways(transcript: str) -> str:
@@ -122,7 +136,8 @@ Do NOT include any conversational filler (e.g., 'Here are the key takeaways...')
 Start directly with the markdown bullet points.
         """
     )
-    return clean_llm_output(chain.invoke(transcript))
+    sample = transcript[:15000] if transcript else ""
+    return clean_llm_output(invoke_chain_with_backoff(chain, sample))
 
 
 def extract_decisions(transcript: str) -> str:
@@ -136,7 +151,8 @@ For each question, provide:
 - Status
         """
     )
-    return clean_llm_output(chain.invoke(transcript))
+    sample = transcript[:15000] if transcript else ""
+    return clean_llm_output(invoke_chain_with_backoff(chain, sample))
 
 
 def _key_decisions(transcript: str) -> str:

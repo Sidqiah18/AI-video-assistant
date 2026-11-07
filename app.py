@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -61,15 +62,20 @@ def process_and_index_transcript(transcript: str, source_name: str = "uploaded_a
         is_meeting = False
     else:
         is_meeting = is_meeting_transcript(transcript)
+        time.sleep(1.0)
 
     title = generate_title(transcript)
+    time.sleep(1.0)
     summary = summarize_transcript(transcript, is_meeting=is_meeting)
 
     if is_meeting:
+        time.sleep(1.0)
         action_items = extract_action_items(transcript)
+        time.sleep(1.0)
         decisions = extract_key_decisions(transcript)
         takeaways = None
     else:
+        time.sleep(1.0)
         action_items = None
         decisions = None
         takeaways = extract_key_takeaways(transcript)

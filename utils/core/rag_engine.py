@@ -8,13 +8,13 @@ from langchain_mistralai import ChatMistralAI
 
 
 def get_llm():
-    """Create and return the chat model for the RAG pipeline."""
+    """Create and return the chat model for the RAG pipeline with automatic retries."""
     api_key = os.getenv("MISTRAL_API_KEY")
     if not api_key:
         raise ValueError("MISTRAL_API_KEY is not set.")
 
     model_name = os.getenv("MISTRAL_MODEL") or "ministral-8b-latest"
-    return ChatMistralAI(model=model_name, temperature=0.2, max_tokens=512)
+    return ChatMistralAI(model=model_name, temperature=0.2, max_tokens=512, max_retries=5)
 
 
 def format_docs(docs) -> str:

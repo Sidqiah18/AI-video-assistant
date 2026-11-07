@@ -1,22 +1,35 @@
 import os
 import re
+import time
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_mistralai import ChatMistralAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 
 def get_mistral_model():
     """
-    Initializes and returns the Mistral model.
+    Initializes and returns the Mistral model with built-in retries.
 
     Returns:
         ChatMistralAI: An instance of the Mistral model.
     """
     mistral_model = os.getenv("MISTRAL_MODEL") or "ministral-8b-latest"
-    return ChatMistralAI(model=mistral_model, temperature=0.2, max_tokens=512)
+    return ChatMistralAI(model=mistral_model, temperature=0.2, max_tokens=512, max_retries=5)
+
+
+@retry(
+    retry=retry_if_exception_type(Exception),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=2, max=15),
+    reraise=True,
+)
+def invoke_chain_with_backoff(chain, input_data):
+    """Invoke a LangChain runnable with automatic exponential backoff on rate limits."""
+    return chain.invoke(input_data)
 
 
 def clean_llm_output(text: str) -> str:
@@ -36,16 +49,12 @@ def clean_llm_output(text: str) -> str:
 
 def split_transcript(transcript: str) -> list[str]:
     """
-    Splits a transcript into smaller chunks for processing.
-
-    Args:
-        transcript (str): The full transcript to be split.
-
-    Returns:
-        list[str]: A list of transcript chunks.
+    Splits a transcript into manageable chunks for processing.
+    Uses large chunks (12,000 chars) to take advantage of modern 128k context windows
+    and minimize API calls against rate limits.
     """
-    chunk_size = 1200
-    chunk_overlap = 150
+    chunk_size = 12000
+    chunk_overlap = 800
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -78,11 +87,15 @@ def summarize_transcript(transcript: str, is_meeting: bool = False) -> str:
     if not chunks:
         return "No content to summarize."
 
-    # If transcript is short enough, summarize directly to save latency and preserve context
+    # If transcript fits in one large chunk, summarize directly in 1 call!
     if len(chunks) == 1:
         concatenated_summary = chunks[0]
     else:
-        summary = [summarize_chain.invoke({"transcript": chunk}) for chunk in chunks]
+        summary = []
+        for idx, chunk in enumerate(chunks):
+            if idx > 0:
+                time.sleep(1.2)  # Respect Mistral free tier RPS rate limit
+            summary.append(invoke_chain_with_backoff(summarize_chain, {"transcript": chunk}))
         concatenated_summary = " ".join(summary)
 
     if is_meeting:
@@ -119,12 +132,12 @@ def summarize_transcript(transcript: str, is_meeting: bool = False) -> str:
         | mistral_model
         | output_parser
     )
-    raw_summary = combined_chain.invoke(concatenated_summary)
+    raw_summary = invoke_chain_with_backoff(combined_chain, concatenated_summary)
     return clean_llm_output(raw_summary)
 
 
 def generate_title(transcript: str) -> str:
-    """Generate a clean, concise title (max 8 words) for the audio/video."""
+    """Generate a clean, concise title (max 8 words) for the audio/video with rate limit retries."""
     llm = get_mistral_model()
     title_prompt = ChatPromptTemplate.from_messages(
         [
@@ -139,6 +152,6 @@ def generate_title(transcript: str) -> str:
     )
     title_chain = title_prompt | llm | StrOutputParser()
     sample = transcript[:3000] if transcript else ""
-    raw_title = title_chain.invoke({"text": sample}).strip()
+    raw_title = invoke_chain_with_backoff(title_chain, {"text": sample}).strip()
     clean_title = re.sub(r'^["\'\s*#]+|["\'\s*#]+$', '', raw_title)
     return clean_title or "Audio / Video Content"
